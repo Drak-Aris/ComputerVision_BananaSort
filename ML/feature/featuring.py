@@ -125,17 +125,24 @@ def build_dataset(lien_sain, lien_malade, output_file):
 
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    df.to_parquet(output_file, index=False, engine='pyarrow')
+    df.to_parquet(
+        output_file,
+        index=False,
+        engine="pyarrow",
+        compression="snappy",
+        use_dictionary=False
+    )
+    df.to_csv(output_file.replace('.parquet', '.csv'), index=False)
     print(f"\n🎉 Dataset final sauvegardé : {output_file}")
     print(f"   → {len(df)} images au total, classes : {df['classe'].value_counts().to_dict()}")
     return df
 
 
 if __name__ == "__main__":
-    path_sain = "../dataset/etat_sante/saint/training"
-    path_malade = "../dataset/etat_sante/malade/training"
+    path_sain = "../../dataset/etat_sante/saint/test"
+    path_malade = "../../dataset/etat_sante/malade/test"
 
-    output_parquet = "../dataset/features_bananes_etatsante.parquet"
+    output_parquet = "../../dataset/features_bananes_etatsante_test.parquet"
 
     df = build_dataset(path_sain, path_malade, output_parquet)
 

@@ -271,7 +271,6 @@ def plot_training_history(history, save_path="training_history.png"):
 
 
 def save_embeddings(model, dataloader, device, class_names, output_csv="embeddings.csv"):
-    # Modèle sans la tête de classification → sortie (batch, 1280)
     embedding_model = nn.Sequential(*list(model.children())[:-1])
     embedding_model.eval()
 
@@ -281,27 +280,21 @@ def save_embeddings(model, dataloader, device, class_names, output_csv="embeddin
     with torch.no_grad():
         for images, labels in tqdm(dataloader, desc="Extraction des embeddings"):
             images = images.to(device)
-            emb = embedding_model(images)           # (batch, 1280, 1, 1)
-            emb = torch.flatten(emb, start_dim=1)   # (batch, 1280)
+            emb = embedding_model(images)
+            emb = torch.flatten(emb, start_dim=1)
             all_embeddings.append(emb.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy()) # on récupère les indices de classes
-
-    # Empilement des tableaux
-    embeddings = np.vstack(all_embeddings)          # (N, 1280)
-    labels_array = np.array(all_labels)             # (N,)
+            all_labels.extend(labels.cpu().numpy())
+    embeddings = np.vstack(all_embeddings)
+    labels_array = np.array(all_labels)
 
     print(f"Nombre d'images traitées : {len(labels_array)}")
     print(f"Forme des embeddings : {embeddings.shape}")
 
-    # Création du DataFrame avec les colonnes de features
     cols = [f"feat_{i}" for i in range(embeddings.shape[1])]
     df = pd.DataFrame(embeddings, columns=cols)
 
-    # Ajout de la colonne label (nom de la classe combinée)
-    # class_names est la liste des classes dans l'ordre de ImageFolder
     df['label'] = [class_names[l] for l in labels_array]
 
-    # Sauvegarde
     df.to_csv(output_csv, index=False)
     print(f"Embeddings sauvegardés dans {output_csv} (forme : {embeddings.shape})")
 
@@ -369,8 +362,6 @@ def main():
     print("\nMesure du temps d'inférence...")
     inference_time = measure_inference_time(trained_model, device)
 
-
-    # Tracer l'historique d'entraînement
     plot_training_history(history, save_path="training_history.png")
 
 if __name__ == "__main__":

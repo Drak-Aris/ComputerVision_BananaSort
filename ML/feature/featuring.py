@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 import pandas as pd
 import os
+import math
+from sklearn.preprocessing import StandardScaler
+from dataset.data_processing import clean_and_resize_images
+
 
 def extract_banana_features(image_path):
     img = cv2.imread(image_path)
@@ -9,144 +13,154 @@ def extract_banana_features(image_path):
         raise ValueError(f"Impossible de lire l'image : {image_path}")
 
     h, w = img.shape[:2]
-    max_dim = max(h, w)
-    if max_dim > 256:
-        scale = 256 / max_dim
-        new_w, new_h = int(w * scale), int(h * scale)
-        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
+    total_pixels_image = h * w
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     lower_yellow = np.array([15, 50, 50])
     upper_yellow = np.array([35, 255, 255])
-    mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow)
-
     lower_green = np.array([35, 50, 50])
     upper_green = np.array([85, 255, 255])
-    mask_green = cv2.inRange(hsv, lower_green, upper_green)
-
     lower_brown = np.array([5, 30, 20])
     upper_brown = np.array([25, 255, 200])
-    mask_brown = cv2.inRange(hsv, lower_brown, upper_brown)
-
     lower_dark = np.array([0, 40, 0])
     upper_dark = np.array([179, 255, 60])
-    mask_dark = cv2.inRange(hsv, lower_dark, upper_dark)
 
-    mask_fruit_initial = cv2.bitwise_or(mask_yellow, mask_green)
-    mask_fruit_initial = cv2.bitwise_or(mask_fruit_initial, mask_brown)
-    mask_fruit_initial = cv2.bitwise_or(mask_fruit_initial, mask_dark)
+    mask = cv2.bitwise_or(cv2.inRange(hsv, lower_yellow, upper_yellow), cv2.inRange(hsv, lower_green, upper_green))
+    mask = cv2.bitwise_or(mask, cv2.inRange(hsv, lower_brown, upper_brown))
+    mask = cv2.bitwise_or(mask, cv2.inRange(hsv, lower_dark, upper_dark))
 
     kernel = np.ones((5, 5), np.uint8)
-    mask_fruit_initial = cv2.morphologyEx(mask_fruit_initial, cv2.MORPH_OPEN, kernel, iterations=1)
-    mask_fruit_initial = cv2.morphologyEx(mask_fruit_initial, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    contours_fruit, _ = cv2.findContours(mask_fruit_initial, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours_fruit:
-        main_contour = max(contours_fruit, key=cv2.contourArea)
-        x, y, bw, bh = cv2.boundingRect(main_contour)
-        largeur_banane = bw
-        hauteur_banane = bh
+    if not contours:
+        return None
 
-        mask_fruit_filled = np.zeros_like(mask_fruit_initial)
-        cv2.drawContours(mask_fruit_filled, [main_contour], -1, 255, -1)
-    else:
-        largeur_banane = w
-        hauteur_banane = h
-        mask_fruit_filled = np.ones((h, w), dtype=np.uint8) * 255
+    main_contour = max(contours, key=cv2.contourArea)
+    fruit_area = cv2.contourArea(main_contour)
 
+    if fruit_area == 0:
+        return None
 
-    total_fruit_pixels = cv2.countNonZero(mask_fruit_filled)
-    if total_fruit_pixels == 0:
-        total_fruit_pixels = 1
+    mask_fruit_filled = np.zeros_like(mask)
+    cv2.drawContours(mask_fruit_filled, [main_contour], -1, 255, -1)
 
-    mask_black_all = cv2.inRange(hsv, lower_dark, upper_dark)
-    mask_black = cv2.bitwise_and(mask_black_all, mask_black_all, mask=mask_fruit_filled)
-    pct_noir = (cv2.countNonZero(mask_black) / total_fruit_pixels) * 100
-    contours_black, _ = cv2.findContours(mask_black, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    taches_noires = sum(1 for c in contours_black if cv2.contourArea(c) > 5)
+    b, g, r = cv2.split(img)
 
-    lower_white = np.array([0, 0, 200])
-    upper_white = np.array([179, 30, 255])
-    mask_white_all = cv2.inRange(hsv, lower_white, upper_white)
-    mask_white = cv2.bitwise_and(mask_white_all, mask_white_all, mask=mask_fruit_filled)
-    kernel_small = np.ones((3, 3), np.uint8)
-    mask_white_clean = cv2.morphologyEx(mask_white, cv2.MORPH_OPEN, kernel_small, iterations=1)
-    pct_blanc = (cv2.countNonZero(mask_white_clean) / total_fruit_pixels) * 100
-    contours_white, _ = cv2.findContours(mask_white_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    taches_blanches = sum(1 for c in contours_white if cv2.contourArea(c) > 10)
+    mean_bgr, std_bgr = cv2.meanStdDev(img, mask=mask_fruit_filled)
+    mean_hsv, _ = cv2.meanStdDev(hsv, mask=mask_fruit_filled)
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    edges_fruit = cv2.bitwise_and(edges, edges, mask=mask_fruit_filled)
-    contours_fissures, _ = cv2.findContours(edges_fruit, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    longueur_fissures = sum(cv2.arcLength(c, False) for c in contours_fissures)
+    mean_B, mean_G, mean_R = mean_bgr.flatten()
+    std_B, std_G, std_R = std_bgr.flatten()
+    mean_H, mean_S, _ = mean_hsv.flatten()
 
+    r_int = r.astype(np.int16)
+    g_int = g.astype(np.int16)
+    b_int = b.astype(np.int16)
 
-    features = {
-        "pct_noir": round(pct_noir, 2),
-        "nb_taches_noires": taches_noires,
-        "pct_blanc": round(pct_blanc, 2),
-        "nb_taches_blanches": taches_blanches,
-        "longueur_fissures": round(longueur_fissures, 2)
+    vert_cond = (g_int > r_int) & (g_int > b_int) & (g_int > 50) & (mask_fruit_filled > 0)
+    pct_vert = (np.count_nonzero(vert_cond) / fruit_area)
+
+    jaune_cond = (r_int > 100) & (g_int > 100) & (b_int < 100) & (mask_fruit_filled > 0)
+    pct_jaune = (np.count_nonzero(jaune_cond) / fruit_area)
+
+    lum = r_int + g_int + b_int
+    sombre_cond = (lum < 150) & (mask_fruit_filled > 0)
+    pct_sombre = (np.count_nonzero(sombre_cond) / fruit_area)
+
+    blanc_cond = (lum > 660) & (mask_fruit_filled > 0)
+    pct_blanc = (np.count_nonzero(blanc_cond) / fruit_area)
+
+    perimeter = cv2.arcLength(main_contour, True)
+    circularity = (4 * math.pi * fruit_area) / (perimeter ** 2) if perimeter > 0 else 0
+
+    aire_relative = fruit_area / total_pixels_image
+
+    hull = cv2.convexHull(main_contour)
+    hull_area = cv2.contourArea(hull)
+    solidity = fruit_area / hull_area if hull_area > 0 else 0
+
+    return {
+        "moyenne_R": mean_R,
+        "moyenne_V": mean_G,
+        "moyenne_B": mean_B,
+        "std_R": std_R,
+        "std_V": std_G,
+        "std_B": std_B,
+        "pct_vert": pct_vert,
+        "pct_jaune": pct_jaune,
+        "pct_sombre": pct_sombre,
+        "pct_blanc": pct_blanc,
+        "moyenne_H": mean_H,
+        "moyenne_S": mean_S,
+        "circularite": circularity,
+        "aire_relative": aire_relative,
+        "solidite": solidity
     }
-    return features
 
 
-def process_folder(root_folder, label):
+def build_dataset(target_dir, output_file):
     data = []
     valid_extensions = ('.jpg', '.jpeg', '.png')
 
-    print(f"Traitement du dossier '{root_folder}'...")
-    for root, dirs, files in os.walk(root_folder):
-        for file in files:
-            if file.lower().endswith(valid_extensions):
-                image_path = os.path.join(root, file)
-                try:
-                    feats = extract_banana_features(image_path)
-                    feats["classe"] = label
-                    data.append(feats)
-                except Exception as e:
-                    print(f"⚠️ Erreur sur {image_path} : {e}")
-    return data
+    print(f"\nExploration de l'arborescence ...")
 
+    for category in os.listdir(target_dir):
+        category_path = os.path.join(target_dir, category)
 
-def build_dataset(lien_sain, lien_malade, output_file):
-    data_sain = process_folder(lien_sain, "sain")
-    data_malade = process_folder(lien_malade, "malade")
+        if os.path.isdir(category_path):
+            label = "export" if category == "vert_sain" else "rejet"
+            print(f"-> Extraction en cours pour la classe [{label}] dans : {category}")
 
-    all_data = data_sain + data_malade
-    df = pd.DataFrame(all_data)
+            for file in os.listdir(category_path):
+                if file.lower().endswith(valid_extensions):
+                    image_path = os.path.join(category_path, file)
+                    try:
+                        feats = extract_banana_features(image_path)
+                        if feats is not None:
+                            feats["classe"] = label
+                            data.append(feats)
+                    except Exception as e:
+                        print(f"⚠️ Erreur sur {image_path} : {e}")
+
+    df = pd.DataFrame(data)
 
     if df.empty:
-        print("Aucune donnée à sauvegarder.")
+        print("Aucune donnée à sauvegarder. Vérifiez les chemins et les images.")
         return None
 
     df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-    df.to_parquet(
-        output_file,
-        index=False,
-        engine="pyarrow",
-        compression="snappy",
-        use_dictionary=False
-    )
-    df.to_csv(output_file.replace('.parquet', '.csv'), index=False)
-    print(f"\n🎉 Dataset final sauvegardé : {output_file}")
-    print(f"   → {len(df)} images au total, classes : {df['classe'].value_counts().to_dict()}")
-    return df
+    print("\nApplication du StandardScaler...")
+    X = df.drop(columns=['classe'])
+    y = df['classe']
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    df_scaled = pd.DataFrame(X_scaled, columns=X.columns)
+    df_scaled['classe'] = y.values
+
+    df_scaled.to_parquet(output_file, index=False, engine="pyarrow", compression="snappy")
+    df_scaled.to_csv(output_file.replace('.parquet', '.csv'), index=False)
+
+    print(f"\nDataset final sauvegardé")
+    print(f"→ {len(df_scaled)} images au total, classes : \n{df_scaled['classe'].value_counts().to_string()}")
+
+    return df_scaled
 
 
 if __name__ == "__main__":
-    path_sain = "../../dataset/etat_sante/saint/test"
-    path_malade = "../../dataset/etat_sante/malade/test"
+    base_dataset_dir = "../../dataset"
+    train_dir = os.path.join(base_dataset_dir, "valid")
+    output_parquet = os.path.join(base_dataset_dir, "features_bananes_validation.parquet")
 
-    output_parquet = "../../dataset/features_bananes_etatsante_test.parquet"
+    if os.path.exists(train_dir):
+        clean_and_resize_images(train_dir, target_size=(224, 224))
+    else:
+        print(f"Erreur : Le dossier parent {train_dir} est introuvable.")
+        exit()
 
-    df = build_dataset(path_sain, path_malade, output_parquet)
-
-    if df is not None:
-        print("\n--- APERÇU DES DONNÉES ---")
-        lire = pd.read_parquet(output_parquet)
-        print(lire.head())
+    df_final = build_dataset(train_dir, output_parquet)

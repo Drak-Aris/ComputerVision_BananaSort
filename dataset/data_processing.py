@@ -31,7 +31,7 @@ def clean_and_resize_images(dataset_dir, target_size=(224, 224)):
     print(f"--- Terminé (redimensionnées : {resized_count}, supprimées : {removed_count}) ---\n")
 
 
-def get_dataset_loaders(dataset_parent_dir, batch_size=32, num_workers=4):
+def get_dataset_loaders(dataset_parent_dir, batch_size=16, num_workers=4):
     print(f"--- Configuration des pipelines et des DataLoaders ---")
 
     imagenet_mean = [0.485, 0.456, 0.406]
@@ -95,3 +95,12 @@ def get_dataset_loaders(dataset_parent_dir, batch_size=32, num_workers=4):
     print(f"Classes détectées : {class_names}")
     print(f"--- Configuration terminée. ---\n")
     return dataloaders, class_names
+
+def get_eval_transform():
+    imagenet_mean = [0.485, 0.456, 0.406]
+    imagenet_std  = [0.229, 0.224, 0.225]
+    return transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
+    ])

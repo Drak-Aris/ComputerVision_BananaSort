@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
@@ -10,7 +11,7 @@ import joblib
 def clustering():
     df = pd.read_csv("../../DL/embeddings_train.csv")
     feature_cols = [c for c in df.columns if c.startswith("feat_")]
-    X = df[feature_cols].values
+    X = df[feature_cols].values.astype(np.float32)
     y_true = df['label'].values
 
     scaler = StandardScaler()
@@ -19,7 +20,6 @@ def clustering():
     k_optimal = 6
     kmeans = KMeans(n_clusters=k_optimal, random_state=42, n_init=10)
     clusters = kmeans.fit_predict(X_scaled)
-
     df['cluster_id'] = clusters
 
     pca = PCA(n_components=2, random_state=42)
@@ -54,25 +54,48 @@ def clustering():
 
     ari = adjusted_rand_score(y_true, clusters)
     print(f"\nIndice de Rand ajusté (ARI) : {ari:.4f}")
-    print("(1 = clustering parfait, 0 = aléatoire)")
+
+    cluster_to_major_class = df.groupby('cluster_id')['label'].agg(lambda x: x.value_counts().idxmax())
+    print("\nClasse majoritaire par cluster :")
+    for c, major in cluster_to_major_class.items():
+        print(f"Cluster {c} -> {major}")
+
+    def map_to_classes(major_class):
+        if 'malade' in major_class:
+            return 'malade'
+        elif major_class == 'vert_sain':
+            return 'vert_sain'
+        elif major_class == 'mure_sain':
+            return 'mure_sain'
+        elif major_class == 'tropmure_sain':
+            return 'tropmure_sain'
+        else:
+            return 'malade'
+
+    cluster_to_classe = {cluster: map_to_classes(major_class)
+                         for cluster, major_class in cluster_to_major_class.items()}
+    df['cluster'] = df['cluster_id'].map(cluster_to_classe)
+
+    print("\nMapping cluster → classe (4 catégories) :")
+    for c, classe in cluster_to_classe.items():
+        print(f"Cluster {c} → {classe}")
 
     df.to_csv("embeddings_with_clusters.csv", index=False)
-    print("Données enrichies sauvegardées dans 'embeddings_with_clusters.csv'")
-
     joblib.dump(scaler, "scaler.joblib")
     joblib.dump(kmeans, "kmeans_model.joblib")
-    print("Modèle de clustering et scaler sauvegardés (scaler.joblib, kmeans_model.joblib)")
+    joblib.dump(cluster_to_classe, "cluster_to_classe.joblib")
+    print("Modèles et mapping sauvegardés.")
+    print("Fichiers créés : scaler.joblib, kmeans_model.joblib, cluster_to_classe.joblib")
+    return scaler, kmeans, cluster_to_classe
 
-    return scaler, kmeans
 
-
-def predict_cluster(embedding_vector):
+def predict_classe(embedding_vector):
     scaler = joblib.load("scaler.joblib")
     kmeans = joblib.load("kmeans_model.joblib")
-
+    cluster_to_classe = joblib.load("cluster_to_classe.joblib")
     scaled = scaler.transform([embedding_vector])
     cluster_id = kmeans.predict(scaled)[0]
-    return cluster_id
+    return cluster_to_classe[cluster_id]
 
 
 if __name__ == '__main__':
